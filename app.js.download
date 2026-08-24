@@ -1,0 +1,2160 @@
+/**
+ * PRACHI GUPTA - PORTFOLIO INTERACTIVE APPLICATION & COMPLETE LIVE CMS
+ * Allows editing EVERYTHING: all text inline or via modals, all images via file upload
+ * or image URLs, adding/editing/deleting all cards, full profile customization,
+ * and exporting updated data.js or self-contained portfolio HTML files.
+ */
+
+const STORAGE_KEY = 'prachi_gupta_portfolio_data_v4';
+let appState = null;
+let editModeActive = false;
+
+// Target tracking for the universal image replacer modal
+let currentImageTarget = {
+  type: null, // 'profile.portrait', 'project', 'certificate', 'speakingPhoto', 'photoWall', etc.
+  id: null
+};
+
+// Target tracking for the universal card editor modal
+let currentCardEditTarget = {
+  type: null,
+  id: null,
+  subKey: null
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  initState();
+  initCursor();
+  initAudioSynth();
+  initNavbar();
+  renderAllSections();
+  initLiveStudio();
+  initModals();
+  initCommandPalette();
+  initContactModule();
+  initCopyActions();
+  initScrollAnimations();
+});
+
+/* ==========================================================================
+   1. STATE MANAGEMENT & PERSISTENCE
+   ========================================================================== */
+function initState() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      appState = JSON.parse(saved);
+    } else {
+      appState = JSON.parse(JSON.stringify(PORTFOLIO_DATA));
+    }
+  } catch (e) {
+    appState = JSON.parse(JSON.stringify(PORTFOLIO_DATA));
+  }
+}
+
+function saveState(notify = true) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(appState));
+    updateSaveIndicator();
+    if (notify) {
+      showToast('All changes saved to your browser ✓', 'success');
+    }
+  } catch (e) {
+    console.error('Storage quota exceeded or error:', e);
+    showToast('Browser storage full. Export your data.js file!', 'warning');
+  }
+}
+
+function updateSaveIndicator() {
+  const badge = document.getElementById('studio-save-indicator');
+  if (badge) {
+    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    badge.textContent = `Auto-saved at ${timeStr}`;
+  }
+}
+
+function resetState() {
+  if (confirm('Reset all edited text, uploaded images, and added/removed items back to default?')) {
+    localStorage.removeItem(STORAGE_KEY);
+    appState = JSON.parse(JSON.stringify(PORTFOLIO_DATA));
+    renderAllSections();
+    showToast('Portfolio reset to default state.', 'info');
+    playSynthNote(400, 0.1);
+  }
+}
+
+function renderAllSections() {
+  applyProfileData();
+  initStats();
+  initDrivers();
+  initTimeline();
+  initProjects();
+  initCertificates();
+  initMUNSection();
+  initSpeakingSection();
+  initSkills();
+  initPhotoWall();
+  initExploringRadar();
+  refreshEditModeDOM();
+}
+
+/* ==========================================================================
+   2. LIVE STUDIO / INLINE EDIT & UNIVERSAL CMS
+   ========================================================================== */
+function initLiveStudio() {
+  const toggleBtn = document.getElementById('studio-toggle-edit');
+  const navToggleBtn = document.getElementById('nav-edit-mode-btn');
+  const modeLabel = document.getElementById('studio-mode-label');
+  const editProfileBtn = document.getElementById('studio-edit-profile-btn');
+  const exportBtn = document.getElementById('studio-export-btn');
+  const resetBtn = document.getElementById('studio-reset-btn');
+
+  // Add Item Triggers
+  const openAddCertHeaderBtn = document.getElementById('btn-open-add-cert');
+  const openAddProjHeaderBtn = document.getElementById('btn-open-add-project');
+  const openAddMileHeaderBtn = document.getElementById('btn-open-add-milestone');
+  const openAddPhotoHeaderBtn = document.getElementById('btn-open-add-photo');
+  const openAddSpeakingBtn = document.getElementById('btn-open-add-speaking');
+  const openAddRadarBtn = document.getElementById('btn-add-radar-tag');
+  const openAddDriverBtn = document.getElementById('btn-add-driver');
+
+  function setEditMode(active) {
+    editModeActive = active;
+    document.body.classList.toggle('edit-mode-active', editModeActive);
+    if (toggleBtn) toggleBtn.classList.toggle('active', editModeActive);
+    if (navToggleBtn) navToggleBtn.classList.toggle('active', editModeActive);
+    if (modeLabel) modeLabel.textContent = editModeActive ? 'Edit Mode: ON' : 'Edit Mode: OFF';
+
+    refreshEditModeDOM();
+
+    if (editModeActive) {
+      showToast('✏️ Edit Mode ON: Click any text to edit • Click "📷 Swap Img" on any photo • Use ✏️ and 🗑️ on any card!', 'info');
+      playSynthNote(750, 0.08);
+    } else {
+      showToast('Preview Mode: All changes saved.', 'info');
+      playSynthNote(450, 0.06);
+    }
+  }
+
+  if (toggleBtn) toggleBtn.addEventListener('click', () => setEditMode(!editModeActive));
+  if (navToggleBtn) navToggleBtn.addEventListener('click', () => setEditMode(!editModeActive));
+  if (editProfileBtn) editProfileBtn.addEventListener('click', openProfileEditor);
+
+  // Global listener for inline editable elements
+  document.addEventListener('input', handleInlineInput);
+  document.addEventListener('blur', (e) => {
+    if (e.target && (e.target.hasAttribute('data-editable') || e.target.hasAttribute('data-edit-field'))) {
+      saveState(false);
+    }
+  }, true);
+
+  // Modal Open Triggers
+  const certModal = document.getElementById('add-cert-modal');
+  if (openAddCertHeaderBtn && certModal) openAddCertHeaderBtn.addEventListener('click', () => certModal.classList.add('active'));
+
+  const projModal = document.getElementById('add-project-modal');
+  if (openAddProjHeaderBtn && projModal) openAddProjHeaderBtn.addEventListener('click', () => projModal.classList.add('active'));
+
+  const mileModal = document.getElementById('add-milestone-modal');
+  if (openAddMileHeaderBtn && mileModal) openAddMileHeaderBtn.addEventListener('click', () => mileModal.classList.add('active'));
+
+  const photoModal = document.getElementById('add-photo-modal');
+  if (openAddPhotoHeaderBtn && photoModal) openAddPhotoHeaderBtn.addEventListener('click', () => photoModal.classList.add('active'));
+
+  const radarModal = document.getElementById('add-radar-modal');
+  if (openAddRadarBtn && radarModal) openAddRadarBtn.addEventListener('click', () => radarModal.classList.add('active'));
+
+  if (openAddDriverBtn) openAddDriverBtn.addEventListener('click', promptAddDriver);
+  if (openAddSpeakingBtn) openAddSpeakingBtn.addEventListener('click', promptAddSpeakingCategory);
+
+  // Export Modal
+  const exportModal = document.getElementById('export-data-modal');
+  if (exportBtn && exportModal) exportBtn.addEventListener('click', () => exportModal.classList.add('active'));
+
+  // Reset
+  if (resetBtn) resetBtn.addEventListener('click', resetState);
+
+  // Form Initializations
+  initAddCertForm();
+  initAddProjectForm();
+  initAddMilestoneForm();
+  initAddPhotoForm();
+  initAddSkillForm();
+  initAddRadarForm();
+  initProfileEditorForm();
+  initUniversalImageModal();
+  initCardEditorModal();
+  initExportActions();
+}
+
+function refreshEditModeDOM() {
+  // Static data-editable items
+  document.querySelectorAll('[data-editable]').forEach(el => {
+    el.contentEditable = editModeActive ? 'true' : 'false';
+    if (editModeActive) {
+      el.setAttribute('title', 'Click to edit text');
+    } else {
+      el.removeAttribute('title');
+    }
+  });
+
+  // Dynamic card items with data-edit-field
+  document.querySelectorAll('[data-edit-field]').forEach(el => {
+    el.contentEditable = editModeActive ? 'true' : 'false';
+    if (editModeActive) {
+      el.setAttribute('title', 'Click to edit text');
+    } else {
+      el.removeAttribute('title');
+    }
+  });
+}
+
+function handleInlineInput(e) {
+  if (!editModeActive) return;
+  const target = e.target;
+
+  // 1. Static Profile / Vision / Contact Keys
+  if (target.hasAttribute('data-editable')) {
+    const key = target.getAttribute('data-editable');
+    const value = target.innerText.trim();
+    updateStateValue(key, value);
+  }
+
+  // 2. Dynamic Card Fields
+  if (target.hasAttribute('data-edit-field')) {
+    const field = target.getAttribute('data-edit-field');
+    const itemType = target.getAttribute('data-edit-type');
+    const itemId = target.getAttribute('data-edit-id');
+    const subKey = target.getAttribute('data-edit-subkey');
+    const value = target.innerText.trim();
+
+    updateDynamicField(itemType, itemId, field, subKey, value);
+  }
+}
+
+function updateStateValue(path, value) {
+  const parts = path.split('.');
+  let curr = appState;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!curr[parts[i]]) curr[parts[i]] = {};
+    curr = curr[parts[i]];
+  }
+  curr[parts[parts.length - 1]] = value;
+}
+
+function updateDynamicField(type, id, field, subKey, value) {
+  if (type === 'stat') {
+    const stat = appState.stats[parseInt(id, 10)];
+    if (stat) stat[field] = value;
+  } else if (type === 'driver') {
+    const driver = appState.drivers[parseInt(id, 10)];
+    if (driver) driver[field] = value;
+  } else if (type === 'timeline') {
+    const item = appState.journey.find(x => x.id === id);
+    if (item) item[field] = value;
+  } else if (type === 'project') {
+    const proj = appState.projects.find(x => x.id === id);
+    if (proj) {
+      if (field === 'tags') {
+        proj.tags = value.split(',').map(t => t.trim()).filter(Boolean);
+      } else {
+        proj[field] = value;
+      }
+    }
+  } else if (type === 'certificate') {
+    const cert = appState.certificates.find(x => x.id === id);
+    if (cert) cert[field] = value;
+  } else if (type === 'munPillar') {
+    const pillar = (appState.munLeadership.pillars || [])[parseInt(id, 10)];
+    if (pillar) pillar[field] = value;
+  } else if (type === 'voiceSkill') {
+    const skill = (appState.munLeadership.myVoiceMatters.skillsGained || [])[parseInt(id, 10)];
+    if (skill) skill[field] = value;
+  } else if (type === 'speakingCat') {
+    const cat = (appState.publicSpeaking.categories || [])[parseInt(id, 10)];
+    if (cat) cat[field] = value;
+  } else if (type === 'speakingPhoto') {
+    const p = (appState.publicSpeaking.photos || []).find(x => x.id === id);
+    if (p) p[field] = value;
+  } else if (type === 'skill') {
+    const skillList = appState.skills ? appState.skills[subKey] : null;
+    if (skillList) {
+      const s = skillList[parseInt(id, 10)];
+      if (s) s[field] = value;
+    }
+  } else if (type === 'photoWall') {
+    const item = (appState.photoWall || []).find(x => x.id === id);
+    if (item) item[field] = value;
+  } else if (type === 'radar') {
+    const r = (appState.exploringRadar || [])[parseInt(id, 10)];
+    if (r) r[field] = value;
+  }
+}
+
+function applyProfileData() {
+  if (!appState.profile) return;
+  const p = appState.profile;
+
+  // Portrait
+  if (p.portrait) {
+    const portraitImg = document.getElementById('main-portrait-img');
+    if (portraitImg) portraitImg.src = p.portrait;
+  }
+
+  // Name
+  document.querySelectorAll('[data-editable="profile.name"]').forEach(el => {
+    if (p.name) el.textContent = p.name;
+  });
+
+  // Headline
+  document.querySelectorAll('[data-editable="profile.headline"]').forEach(el => {
+    if (p.headline) el.innerHTML = formatHeadlineHTML(p.headline);
+  });
+
+  // Bio
+  document.querySelectorAll('[data-editable="profile.bio"]').forEach(el => {
+    if (p.bio) el.textContent = p.bio;
+  });
+
+  // School
+  document.querySelectorAll('[data-editable="profile.school"]').forEach(el => {
+    if (p.school) el.textContent = p.school;
+  });
+
+  // Status
+  document.querySelectorAll('[data-editable="profile.status"]').forEach(el => {
+    if (p.status) el.textContent = p.status;
+  });
+
+  // Email
+  const emailEl = document.getElementById('display-email');
+  if (emailEl && p.email) emailEl.textContent = p.email;
+
+  // Socials
+  if (p.socials) {
+    const linkedInEl = document.querySelector('[data-editable="profile.socials.linkedin"]');
+    const linkedInLink = document.getElementById('display-linkedin-link');
+    if (linkedInEl && p.socials.linkedin) {
+      linkedInEl.textContent = p.socials.linkedin.replace(/^https?:\/\/(www\.)?/, '') + ' ↗';
+    }
+    if (linkedInLink && p.socials.linkedin) linkedInLink.href = p.socials.linkedin;
+
+    const instaEl = document.querySelector('[data-editable="profile.socials.instagram"]');
+    const instaLink = document.getElementById('display-instagram-link');
+    if (instaEl && p.socials.instagram) {
+      instaEl.textContent = p.socials.instagram.replace(/^https?:\/\/(www\.)?instagram\.com\//, '@') + ' ↗';
+    }
+    if (instaLink && p.socials.instagram) instaLink.href = p.socials.instagram;
+  }
+}
+
+function formatHeadlineHTML(headline) {
+  return headline
+    .replace(/\bScience\b/gi, '<span class="gradient-text">Science</span>')
+    .replace(/\bIdeas\b/gi, '<span class="gradient-text-alt">Ideas</span>')
+    .replace(/\bFuture\b/gi, '<span class="gradient-text-emerald">Future</span>');
+}
+
+function readFileAsDataURL(file, callback) {
+  const reader = new FileReader();
+  reader.onload = (e) => callback(e.target.result);
+  reader.readAsDataURL(file);
+}
+
+/* ==========================================================================
+   3. UNIVERSAL IMAGE REPLACER (FILE UPLOAD OR URL)
+   ========================================================================== */
+function initUniversalImageModal() {
+  const modal = document.getElementById('universal-image-modal');
+  const form = document.getElementById('form-universal-image');
+  const dropzone = document.getElementById('universal-img-dropzone');
+  const fileInput = document.getElementById('universal-img-file-input');
+  const urlInput = document.getElementById('universal-img-url-input');
+  const previewImg = document.getElementById('universal-img-preview');
+  let selectedDataUrl = null;
+
+  if (!modal || !form || !dropzone || !fileInput) return;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      readFileAsDataURL(file, (dataUrl) => {
+        selectedDataUrl = dataUrl;
+        previewImg.src = dataUrl;
+        previewImg.style.display = 'block';
+        if (urlInput) urlInput.value = '';
+      });
+    }
+  });
+
+  if (urlInput) {
+    urlInput.addEventListener('input', (e) => {
+      const url = e.target.value.trim();
+      if (url) {
+        selectedDataUrl = url;
+        previewImg.src = url;
+        previewImg.style.display = 'block';
+      }
+    });
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const finalImage = selectedDataUrl || (urlInput ? urlInput.value.trim() : null);
+
+    if (!finalImage) {
+      showToast('Please select a file or enter an image URL.', 'warning');
+      return;
+    }
+
+    applyImageToTarget(currentImageTarget.type, currentImageTarget.id, finalImage);
+    saveState();
+    renderAllSections();
+
+    modal.classList.remove('active');
+    form.reset();
+    previewImg.style.display = 'none';
+    selectedDataUrl = null;
+    showToast('Image successfully updated! ✓', 'success');
+    playSynthNote(840, 0.08);
+  });
+}
+
+window.openImageReplacer = function(type, id, currentSrc = '', title = 'Replace Image') {
+  currentImageTarget = { type, id };
+  const modal = document.getElementById('universal-image-modal');
+  const titleEl = document.getElementById('universal-image-modal-title');
+  const previewImg = document.getElementById('universal-img-preview');
+  const urlInput = document.getElementById('universal-img-url-input');
+
+  if (titleEl) titleEl.textContent = `📷 ${title}`;
+  if (urlInput) urlInput.value = (currentSrc && !currentSrc.startsWith('data:')) ? currentSrc : '';
+  if (previewImg) {
+    if (currentSrc) {
+      previewImg.src = currentSrc;
+      previewImg.style.display = 'block';
+    } else {
+      previewImg.style.display = 'none';
+    }
+  }
+
+  if (modal) modal.classList.add('active');
+};
+
+function applyImageToTarget(type, id, imgSrc) {
+  if (type === 'profile.portrait') {
+    if (!appState.profile) appState.profile = {};
+    appState.profile.portrait = imgSrc;
+  } else if (type === 'project') {
+    const proj = appState.projects.find(p => p.id === id);
+    if (proj) proj.imagePlaceholder = imgSrc;
+  } else if (type === 'certificate') {
+    const cert = appState.certificates.find(c => c.id === id);
+    if (cert) cert.image = imgSrc;
+  } else if (type === 'speakingPhoto') {
+    const p = (appState.publicSpeaking.photos || []).find(x => x.id === id);
+    if (p) p.placeholder = imgSrc;
+  } else if (type === 'photoWall') {
+    const item = (appState.photoWall || []).find(x => x.id === id);
+    if (item) item.image = imgSrc;
+  }
+}
+
+/* ==========================================================================
+   4. QUICK PROFILE & BIO EDITOR MODAL
+   ========================================================================== */
+function initProfileEditorForm() {
+  const form = document.getElementById('form-edit-profile');
+  if (!form) return;
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    if (!appState.profile) appState.profile = {};
+
+    appState.profile.name = document.getElementById('profile-name-input').value.trim();
+    appState.profile.headline = document.getElementById('profile-headline-input').value.trim();
+    appState.profile.status = document.getElementById('profile-status-input').value.trim();
+    appState.profile.bio = document.getElementById('profile-bio-input').value.trim();
+    appState.profile.school = document.getElementById('profile-school-input').value.trim();
+    appState.profile.grade = document.getElementById('profile-grade-input').value.trim();
+    appState.profile.location = document.getElementById('profile-loc-input').value.trim();
+    appState.profile.email = document.getElementById('profile-email-input').value.trim();
+
+    if (!appState.profile.socials) appState.profile.socials = {};
+    appState.profile.socials.linkedin = document.getElementById('profile-linkedin-input').value.trim();
+    appState.profile.socials.instagram = document.getElementById('profile-instagram-input').value.trim();
+    appState.profile.socials.github = document.getElementById('profile-github-input').value.trim();
+
+    saveState();
+    renderAllSections();
+
+    document.getElementById('edit-profile-modal').classList.remove('active');
+    showToast('Profile & Bio updated successfully! ✓', 'success');
+    playSynthNote(880, 0.1);
+  });
+}
+
+function openProfileEditor() {
+  const modal = document.getElementById('edit-profile-modal');
+  if (!modal) return;
+  const p = appState.profile || {};
+
+  document.getElementById('profile-name-input').value = p.name || '';
+  document.getElementById('profile-headline-input').value = p.headline || '';
+  document.getElementById('profile-status-input').value = p.status || '';
+  document.getElementById('profile-bio-input').value = p.bio || '';
+  document.getElementById('profile-school-input').value = p.school || '';
+  document.getElementById('profile-grade-input').value = p.grade || '';
+  document.getElementById('profile-loc-input').value = p.location || '';
+  document.getElementById('profile-email-input').value = p.email || '';
+
+  const soc = p.socials || {};
+  document.getElementById('profile-linkedin-input').value = soc.linkedin || '';
+  document.getElementById('profile-instagram-input').value = soc.instagram || '';
+  document.getElementById('profile-github-input').value = soc.github || '';
+
+  modal.classList.add('active');
+}
+
+/* ==========================================================================
+   5. UNIVERSAL CARD EDITOR MODAL (FORM EDIT FOR ANY CARD)
+   ========================================================================== */
+function initCardEditorModal() {
+  const form = document.getElementById('form-edit-card');
+  if (!form) return;
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const { type, id, subKey } = currentCardEditTarget;
+
+    if (type === 'project') {
+      const proj = appState.projects.find(p => p.id === id);
+      if (proj) {
+        proj.title = document.getElementById('card-edit-title').value.trim();
+        proj.subtitle = document.getElementById('card-edit-subtitle').value.trim();
+        proj.category = document.getElementById('card-edit-cat').value.trim();
+        proj.status = document.getElementById('card-edit-status').value.trim();
+        proj.tags = document.getElementById('card-edit-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+        proj.summary = document.getElementById('card-edit-desc').value.trim();
+        proj.deepDive = document.getElementById('card-edit-deepdive').value.trim();
+        initProjects();
+      }
+    } else if (type === 'certificate') {
+      const cert = appState.certificates.find(c => c.id === id);
+      if (cert) {
+        cert.title = document.getElementById('card-edit-title').value.trim();
+        cert.organization = document.getElementById('card-edit-subtitle').value.trim();
+        cert.year = document.getElementById('card-edit-status').value.trim();
+        cert.category = document.getElementById('card-edit-cat').value.trim();
+        cert.desc = document.getElementById('card-edit-desc').value.trim();
+        initCertificates();
+      }
+    } else if (type === 'timeline') {
+      const item = appState.journey.find(x => x.id === id);
+      if (item) {
+        item.title = document.getElementById('card-edit-title').value.trim();
+        item.institution = document.getElementById('card-edit-subtitle').value.trim();
+        item.year = document.getElementById('card-edit-status').value.trim();
+        item.category = document.getElementById('card-edit-cat').value.trim();
+        item.description = document.getElementById('card-edit-desc').value.trim();
+        item.keyTakeaways = document.getElementById('card-edit-tags').value.split(',').map(t => t.trim()).filter(Boolean);
+        initTimeline();
+      }
+    } else if (type === 'photoWall') {
+      const item = appState.photoWall.find(p => p.id === id);
+      if (item) {
+        item.title = document.getElementById('card-edit-title').value.trim();
+        item.tag = document.getElementById('card-edit-cat').value.trim();
+        item.desc = document.getElementById('card-edit-desc').value.trim();
+        initPhotoWall();
+      }
+    } else if (type === 'skill') {
+      const skillList = appState.skills[subKey];
+      if (skillList && skillList[parseInt(id, 10)]) {
+        const s = skillList[parseInt(id, 10)];
+        s.name = document.getElementById('card-edit-title').value.trim();
+        s.level = document.getElementById('card-edit-subtitle').value.trim();
+        s.desc = document.getElementById('card-edit-desc').value.trim();
+        initSkills();
+      }
+    }
+
+    saveState();
+    refreshEditModeDOM();
+    document.getElementById('edit-card-modal').classList.remove('active');
+    showToast('Card updated successfully! ✓', 'success');
+    playSynthNote(880, 0.08);
+  });
+}
+
+window.openCardEditor = function(type, id, subKey = null) {
+  currentCardEditTarget = { type, id, subKey };
+  const modal = document.getElementById('edit-card-modal');
+  const titleHeader = document.getElementById('edit-card-modal-title');
+  const deepDiveGroup = document.getElementById('card-edit-deepdive-group');
+  const tagsGroup = document.getElementById('card-edit-tags-group');
+
+  if (!modal) return;
+
+  deepDiveGroup.style.display = 'none';
+  tagsGroup.style.display = 'block';
+
+  if (type === 'project') {
+    const proj = appState.projects.find(p => p.id === id);
+    if (!proj) return;
+    titleHeader.textContent = `✏️ Edit Project: ${proj.title}`;
+    document.getElementById('card-edit-title-label').textContent = 'Project Title';
+    document.getElementById('card-edit-title').value = proj.title;
+
+    document.getElementById('card-edit-subtitle-label').textContent = 'Subtitle / Research Focus';
+    document.getElementById('card-edit-subtitle').value = proj.subtitle;
+
+    document.getElementById('card-edit-cat-label').textContent = 'Category';
+    document.getElementById('card-edit-cat').value = proj.category;
+
+    document.getElementById('card-edit-status-label').textContent = 'Status (e.g. Active Research)';
+    document.getElementById('card-edit-status').value = proj.status;
+
+    document.getElementById('card-edit-tags-label').textContent = 'Tags (comma separated)';
+    document.getElementById('card-edit-tags').value = (proj.tags || []).join(', ');
+
+    document.getElementById('card-edit-desc-label').textContent = 'Summary';
+    document.getElementById('card-edit-desc').value = proj.summary;
+
+    deepDiveGroup.style.display = 'block';
+    document.getElementById('card-edit-deepdive').value = proj.deepDive || proj.summary;
+
+  } else if (type === 'certificate') {
+    const cert = appState.certificates.find(c => c.id === id);
+    if (!cert) return;
+    titleHeader.textContent = `✏️ Edit Certificate: ${cert.title}`;
+    document.getElementById('card-edit-title-label').textContent = 'Certificate Title';
+    document.getElementById('card-edit-title').value = cert.title;
+
+    document.getElementById('card-edit-subtitle-label').textContent = 'Issuing Organization';
+    document.getElementById('card-edit-subtitle').value = cert.organization;
+
+    document.getElementById('card-edit-cat-label').textContent = 'Category (Science/MUN/Leadership/etc)';
+    document.getElementById('card-edit-cat').value = cert.category;
+
+    document.getElementById('card-edit-status-label').textContent = 'Year / Date';
+    document.getElementById('card-edit-status').value = cert.year;
+
+    tagsGroup.style.display = 'none';
+
+    document.getElementById('card-edit-desc-label').textContent = 'Description & Verification';
+    document.getElementById('card-edit-desc').value = cert.desc;
+
+  } else if (type === 'timeline') {
+    const item = appState.journey.find(x => x.id === id);
+    if (!item) return;
+    titleHeader.textContent = `✏️ Edit Milestone: ${item.title}`;
+    document.getElementById('card-edit-title-label').textContent = 'Milestone Title';
+    document.getElementById('card-edit-title').value = item.title;
+
+    document.getElementById('card-edit-subtitle-label').textContent = 'Institution / Organization';
+    document.getElementById('card-edit-subtitle').value = item.institution;
+
+    document.getElementById('card-edit-cat-label').textContent = 'Category';
+    document.getElementById('card-edit-cat').value = item.category;
+
+    document.getElementById('card-edit-status-label').textContent = 'Year / Date';
+    document.getElementById('card-edit-status').value = item.year;
+
+    document.getElementById('card-edit-tags-label').textContent = 'Key Takeaways (comma separated)';
+    document.getElementById('card-edit-tags').value = (item.keyTakeaways || []).join(', ');
+
+    document.getElementById('card-edit-desc-label').textContent = 'Description';
+    document.getElementById('card-edit-desc').value = item.description;
+
+  } else if (type === 'photoWall') {
+    const item = appState.photoWall.find(p => p.id === id);
+    if (!item) return;
+    titleHeader.textContent = `✏️ Edit Scrapbook Photo: ${item.title}`;
+    document.getElementById('card-edit-title-label').textContent = 'Photo Title';
+    document.getElementById('card-edit-title').value = item.title;
+
+    document.getElementById('card-edit-subtitle-label').textContent = 'Aspect Ratio';
+    document.getElementById('card-edit-subtitle').value = item.aspect || 'landscape';
+
+    document.getElementById('card-edit-cat-label').textContent = 'Tag Category';
+    document.getElementById('card-edit-cat').value = item.tag;
+
+    document.getElementById('card-edit-status-label').textContent = 'Category Label';
+    document.getElementById('card-edit-status').value = item.category;
+
+    tagsGroup.style.display = 'none';
+
+    document.getElementById('card-edit-desc-label').textContent = 'Caption';
+    document.getElementById('card-edit-desc').value = item.desc;
+
+  } else if (type === 'skill') {
+    const s = appState.skills[subKey][parseInt(id, 10)];
+    if (!s) return;
+    titleHeader.textContent = `✏️ Edit Skill: ${s.name}`;
+    document.getElementById('card-edit-title-label').textContent = 'Skill Name';
+    document.getElementById('card-edit-title').value = s.name;
+
+    document.getElementById('card-edit-subtitle-label').textContent = 'Level / Domain';
+    document.getElementById('card-edit-subtitle').value = s.level;
+
+    document.getElementById('card-edit-cat-label').textContent = 'Column Key';
+    document.getElementById('card-edit-cat').value = subKey;
+
+    document.getElementById('card-edit-status-label').textContent = 'Status';
+    document.getElementById('card-edit-status').value = 'Active';
+
+    tagsGroup.style.display = 'none';
+
+    document.getElementById('card-edit-desc-label').textContent = 'Application & Context';
+    document.getElementById('card-edit-desc').value = s.desc;
+  }
+
+  modal.classList.add('active');
+};
+
+/* ==========================================================================
+   6. STATS SECTION (HERO TICKER)
+   ========================================================================== */
+function initStats() {
+  const statsContainer = document.getElementById('hero-stats-grid');
+  if (!statsContainer || !appState.stats) return;
+
+  statsContainer.innerHTML = appState.stats.map((stat, idx) => `
+    <div class="stat-card glass-panel" data-stat-id="${stat.id}">
+      <div class="card-edit-toolbar">
+        <button class="card-action-icon-btn btn-delete" onclick="deleteStat(${idx})">🗑️ Del</button>
+      </div>
+      <div class="stat-badge" data-edit-type="stat" data-edit-id="${idx}" data-edit-field="badge">${stat.badge}</div>
+      <div class="stat-value-wrap">
+        <span class="stat-value gradient-text" data-edit-type="stat" data-edit-id="${idx}" data-edit-field="value">${stat.value}</span>
+      </div>
+      <div class="stat-label" data-edit-type="stat" data-edit-id="${idx}" data-edit-field="label">${stat.label}</div>
+      <p class="stat-desc" data-edit-type="stat" data-edit-id="${idx}" data-edit-field="desc">${stat.desc}</p>
+      <div class="stat-glow"></div>
+    </div>
+  `).join('');
+}
+
+window.deleteStat = function(idx) {
+  if (confirm(`Remove this statistic card?`)) {
+    appState.stats.splice(idx, 1);
+    saveState();
+    initStats();
+    showToast('Statistic card removed.', 'info');
+  }
+};
+
+/* ==========================================================================
+   7. WHAT DRIVES ME
+   ========================================================================== */
+function initDrivers() {
+  const container = document.getElementById('drivers-grid');
+  if (!container || !appState.drivers) return;
+
+  container.innerHTML = appState.drivers.map((driver, index) => `
+    <div class="driver-card glass-card color-${driver.color}" data-driver-idx="${index}">
+      <div class="card-edit-toolbar">
+        <button class="card-action-icon-btn btn-delete" onclick="deleteDriver(${index})">🗑️ Del</button>
+      </div>
+      <div class="driver-header">
+        <span class="driver-num">0${index + 1} //</span>
+        <h4 class="driver-word" data-edit-type="driver" data-edit-id="${index}" data-edit-field="word">${driver.word}</h4>
+      </div>
+      <div class="driver-tagline" data-edit-type="driver" data-edit-id="${index}" data-edit-field="tagline">${driver.tagline}</div>
+      <p class="driver-desc" data-edit-type="driver" data-edit-id="${index}" data-edit-field="desc">${driver.desc}</p>
+      <div class="driver-corner-accent"></div>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('.driver-card').forEach(card => {
+    card.addEventListener('mouseenter', () => playSynthNote(720, 0.04, 'triangle'));
+  });
+}
+
+function promptAddDriver() {
+  const word = prompt('Enter Driver Core Word (e.g. Discovery):');
+  if (!word) return;
+  const tagline = prompt('Enter Tagline (e.g. Seeking the Unseen):');
+  const desc = prompt('Enter Description:');
+
+  const colors = ['cyan', 'violet', 'blue', 'magenta', 'emerald', 'amber'];
+  const color = colors[Math.floor(Math.random() * colors.length)];
+
+  if (!appState.drivers) appState.drivers = [];
+  appState.drivers.push({ word, tagline: tagline || '', desc: desc || '', color });
+
+  saveState();
+  initDrivers();
+  refreshEditModeDOM();
+  showToast(`Driver "${word}" added!`, 'success');
+}
+
+window.deleteDriver = function(index) {
+  if (confirm(`Remove "${appState.drivers[index].word}" driver?`)) {
+    appState.drivers.splice(index, 1);
+    saveState();
+    initDrivers();
+    showToast('Driver removed.', 'info');
+  }
+};
+
+/* ==========================================================================
+   8. JOURNEY TIMELINE
+   ========================================================================== */
+function initTimeline() {
+  const container = document.getElementById('timeline-list');
+  const filterBtns = document.querySelectorAll('.timeline-filter-btn');
+  if (!container || !appState.journey) return;
+
+  function renderTimeline(category = 'all') {
+    const items = category === 'all' 
+      ? appState.journey 
+      : appState.journey.filter(j => j.category.toLowerCase().includes(category.toLowerCase()));
+
+    container.innerHTML = items.map((item) => `
+      <div class="timeline-item" data-id="${item.id}">
+        <div class="timeline-dot">
+          <div class="timeline-dot-inner"></div>
+        </div>
+        <div class="timeline-content glass-card">
+          <div class="card-edit-toolbar">
+            <button class="card-action-icon-btn" onclick="openCardEditor('timeline', '${item.id}')">✏️ Edit</button>
+            <button class="card-action-icon-btn btn-delete" onclick="deleteMilestone('${item.id}')">🗑️ Remove</button>
+          </div>
+          <div class="timeline-meta">
+            <span class="timeline-year" data-edit-type="timeline" data-edit-id="${item.id}" data-edit-field="year">${item.year}</span>
+            <span class="timeline-badge" data-edit-type="timeline" data-edit-id="${item.id}" data-edit-field="badge">${item.badge}</span>
+          </div>
+          <h3 class="timeline-title" data-edit-type="timeline" data-edit-id="${item.id}" data-edit-field="title">${item.title}</h3>
+          <div class="timeline-institution" data-edit-type="timeline" data-edit-id="${item.id}" data-edit-field="institution">${item.institution}</div>
+          <p class="timeline-desc" data-edit-type="timeline" data-edit-id="${item.id}" data-edit-field="description">${item.description}</p>
+          <div class="timeline-takeaways">
+            ${(item.keyTakeaways || []).map(t => `<span class="takeaway-tag"><span class="tag-bullet">✦</span> ${t}</span>`).join('')}
+          </div>
+        </div>
+      </div>
+    `).join('');
+    refreshEditModeDOM();
+  }
+
+  renderTimeline('all');
+
+  filterBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      filterBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const cat = btn.getAttribute('data-filter');
+      renderTimeline(cat);
+      playSynthNote(560, 0.05);
+    });
+  });
+}
+
+function initAddMilestoneForm() {
+  const form = document.getElementById('form-add-milestone');
+  if (!form) return;
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = document.getElementById('milestone-title-input').value.trim();
+    const category = document.getElementById('milestone-cat-input').value;
+    const year = document.getElementById('milestone-year-input').value.trim();
+    const inst = document.getElementById('milestone-inst-input').value.trim();
+    const desc = document.getElementById('milestone-desc-input').value.trim();
+    const takeawaysRaw = document.getElementById('milestone-takeaways-input').value.trim();
+    const takeaways = takeawaysRaw ? takeawaysRaw.split(',').map(t => t.trim()).filter(Boolean) : ['Scientific excellence', 'Leadership'];
+
+    const newMilestone = {
+      id: 'journey-' + Date.now(),
+      title: title,
+      category: category,
+      categoryLabel: `${category} Milestone`,
+      year: year,
+      institution: inst,
+      badge: 'Key Milestone',
+      description: desc,
+      keyTakeaways: takeaways,
+      icon: 'award'
+    };
+
+    if (!appState.journey) appState.journey = [];
+    appState.journey.unshift(newMilestone);
+
+    saveState();
+    initTimeline();
+
+    form.reset();
+    document.getElementById('add-milestone-modal').classList.remove('active');
+    showToast(`Milestone "${title}" added to timeline!`, 'success');
+    playSynthNote(880, 0.1);
+  });
+}
+
+window.deleteMilestone = function(id) {
+  const item = appState.journey.find(x => x.id === id);
+  if (confirm(`Delete milestone "${item ? item.title : id}"?`)) {
+    appState.journey = appState.journey.filter(x => x.id !== id);
+    saveState();
+    initTimeline();
+    showToast('Milestone removed from timeline.', 'info');
+  }
+};
+
+/* ==========================================================================
+   9. PROJECTS SECTION
+   ========================================================================== */
+function initProjects() {
+  const container = document.getElementById('projects-grid');
+  if (!container || !appState.projects) return;
+
+  container.innerHTML = appState.projects.map(proj => `
+    <div class="project-card glass-card color-${proj.color || 'cyan'}" data-project-id="${proj.id}">
+      <div class="card-edit-toolbar">
+        <button class="card-action-icon-btn" onclick="event.stopPropagation(); openCardEditor('project', '${proj.id}')">✏️ Edit</button>
+        <button class="card-action-icon-btn btn-delete" onclick="event.stopPropagation(); deleteProject('${proj.id}')">🗑️ Delete</button>
+      </div>
+
+      <div class="project-media-frame">
+        <img src="${proj.imagePlaceholder}" alt="${proj.title}" class="project-img-placeholder" loading="lazy">
+        <div class="media-overlay">
+          <span class="view-project-label">Deep Dive Research ↗</span>
+        </div>
+        <div class="project-status-pill">${proj.status}</div>
+
+        <!-- In-Place Image Upload Trigger -->
+        <button class="img-upload-trigger" title="Change Project Image" onclick="event.stopPropagation(); openImageReplacer('project', '${proj.id}', '${proj.imagePlaceholder}', 'Change Project Image')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span>📷 Swap Img</span>
+        </button>
+      </div>
+      <div class="project-body">
+        <div class="project-category" data-edit-type="project" data-edit-id="${proj.id}" data-edit-field="category">${proj.category}</div>
+        <h3 class="project-title" data-edit-type="project" data-edit-id="${proj.id}" data-edit-field="title">${proj.title}</h3>
+        <h4 class="project-subtitle" data-edit-type="project" data-edit-id="${proj.id}" data-edit-field="subtitle">${proj.subtitle}</h4>
+        <p class="project-summary" data-edit-type="project" data-edit-id="${proj.id}" data-edit-field="summary">${proj.summary}</p>
+        
+        <div class="project-tags">
+          ${(proj.tags || []).map(tag => `<span class="project-tag">${tag}</span>`).join('')}
+        </div>
+
+        <div class="project-footer">
+          <button class="btn-project-explore btn-primary-glow" data-project-open="${proj.id}">
+            <span>Inspect Project Spec</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('[data-project-open], .media-overlay').forEach(el => {
+    el.addEventListener('click', (e) => {
+      const card = e.currentTarget.closest('.project-card');
+      const projId = card.getAttribute('data-project-id');
+      openProjectModal(projId);
+      playSynthNote(680, 0.07);
+    });
+  });
+
+  refreshEditModeDOM();
+}
+
+function initAddProjectForm() {
+  const form = document.getElementById('form-add-project');
+  const dropzone = document.getElementById('proj-dropzone');
+  const fileInput = document.getElementById('proj-file-input');
+  const previewImg = document.getElementById('proj-preview-img');
+  let selectedDataUrl = null;
+
+  if (!form || !dropzone || !fileInput) return;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      readFileAsDataURL(file, (dataUrl) => {
+        selectedDataUrl = dataUrl;
+        previewImg.src = dataUrl;
+        previewImg.style.display = 'block';
+      });
+    }
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = document.getElementById('proj-title-input').value.trim();
+    const subtitle = document.getElementById('proj-subtitle-input').value.trim();
+    const tagsRaw = document.getElementById('proj-tags-input').value.trim();
+    const summary = document.getElementById('proj-summary-input').value.trim();
+    const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : ['Science', 'Innovation'];
+
+    const newProj = {
+      id: 'proj-' + Date.now(),
+      title: title,
+      subtitle: subtitle,
+      category: 'Research | Innovation | STEM',
+      status: 'Active Research',
+      featured: true,
+      summary: summary,
+      tags: tags,
+      color: 'cyan',
+      placeholderType: 'schematic',
+      imagePlaceholder: selectedDataUrl || 'assets/placeholders/project_incubator.svg',
+      innovationHighlights: [
+        'Methodology and preliminary prototyping developed by Prachi Gupta.',
+        'Continuous experimental refinement and data tracking.'
+      ],
+      myContribution: 'Lead research architect, prototyping, and presentation.',
+      deepDive: summary
+    };
+
+    if (!appState.projects) appState.projects = [];
+    appState.projects.unshift(newProj);
+
+    saveState();
+    initProjects();
+
+    form.reset();
+    previewImg.style.display = 'none';
+    selectedDataUrl = null;
+    document.getElementById('add-project-modal').classList.remove('active');
+    showToast(`Project "${title}" published to your portfolio!`, 'success');
+    playSynthNote(880, 0.1);
+  });
+}
+
+window.deleteProject = function(projectId) {
+  const p = appState.projects.find(x => x.id === projectId);
+  if (confirm(`Are you sure you want to delete project "${p ? p.title : projectId}"?`)) {
+    appState.projects = appState.projects.filter(x => x.id !== projectId);
+    saveState();
+    initProjects();
+    showToast('Project removed.', 'info');
+  }
+};
+
+function openProjectModal(projectId) {
+  const proj = appState.projects.find(p => p.id === projectId);
+  if (!proj) return;
+
+  const modal = document.getElementById('project-modal');
+  const body = document.getElementById('project-modal-content');
+  if (!modal || !body) return;
+
+  body.innerHTML = `
+    <div class="modal-project-header">
+      <div class="modal-category">${proj.category}</div>
+      <h2 class="modal-title gradient-text">${proj.title}</h2>
+      <div class="modal-subtitle">${proj.subtitle}</div>
+    </div>
+
+    <div class="modal-media-slot">
+      <img src="${proj.imagePlaceholder}" alt="${proj.title}" class="modal-large-img">
+      <div class="modal-media-caption">
+        <span>${proj.title} // Specification Schematic & Artifacts</span>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h4 class="modal-section-title">Project Overview & Thesis</h4>
+      <p class="modal-prose">${proj.deepDive || proj.summary}</p>
+    </div>
+
+    <div class="modal-section">
+      <h4 class="modal-section-title">Key Innovation Highlights</h4>
+      <ul class="modal-highlights-list">
+        ${(proj.innovationHighlights || []).map(h => `
+          <li>
+            <span class="highlight-bullet">✦</span>
+            <span>${h}</span>
+          </li>
+        `).join('')}
+      </ul>
+    </div>
+
+    <div class="modal-section">
+      <h4 class="modal-section-title">My Contribution & Role</h4>
+      <div class="contribution-box glass-panel">
+        <p>${proj.myContribution}</p>
+      </div>
+    </div>
+
+    <div class="modal-section">
+      <h4 class="modal-section-title">Domain Stack & Methodologies</h4>
+      <div class="modal-tags">
+        ${(proj.tags || []).map(t => `<span class="project-tag modal-tag-pill">${t}</span>`).join('')}
+      </div>
+    </div>
+  `;
+
+  modal.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+/* ==========================================================================
+   10. CERTIFICATES & ACHIEVEMENTS GALLERY
+   ========================================================================== */
+function initCertificates() {
+  const container = document.getElementById('certificates-grid');
+  const filterBtns = document.querySelectorAll('.cert-filter-btn');
+  if (!container || !appState.certificates) return;
+
+  function renderCertificates(filter = 'All') {
+    const list = filter === 'All' 
+      ? appState.certificates 
+      : appState.certificates.filter(c => c.category.toLowerCase() === filter.toLowerCase());
+
+    container.innerHTML = list.map(cert => `
+      <div class="cert-card glass-card" data-cert-id="${cert.id}">
+        <div class="card-edit-toolbar">
+          <button class="card-action-icon-btn" onclick="event.stopPropagation(); openCardEditor('certificate', '${cert.id}')">✏️ Edit</button>
+          <button class="card-action-icon-btn btn-delete" onclick="event.stopPropagation(); deleteCertificate('${cert.id}')">🗑️ Delete</button>
+        </div>
+
+        <div class="cert-frame">
+          <img src="${cert.image}" alt="${cert.title}" class="cert-img" loading="lazy">
+          <div class="cert-frame-overlay">
+            <button class="btn-cert-view" data-cert-view="${cert.id}">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <span>View Full Certificate</span>
+            </button>
+          </div>
+          <span class="cert-year-tag" data-edit-type="certificate" data-edit-id="${cert.id}" data-edit-field="year">${cert.year}</span>
+
+          <!-- In-Place Upload Trigger -->
+          <button class="img-upload-trigger" title="Change Certificate Image" onclick="event.stopPropagation(); openImageReplacer('certificate', '${cert.id}', '${cert.image}', 'Change Certificate Image')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <span>📷 Swap Img</span>
+          </button>
+        </div>
+        <div class="cert-body">
+          <div class="cert-category-badge" data-edit-type="certificate" data-edit-id="${cert.id}" data-edit-field="category">${cert.categoryLabel || cert.category}</div>
+          <h4 class="cert-title" data-edit-type="certificate" data-edit-id="${cert.id}" data-edit-field="title">${cert.title}</h4>
+          <div class="cert-org" data-edit-type="certificate" data-edit-id="${cert.id}" data-edit-field="organization">${cert.organization}</div>
+          <p class="cert-desc" data-edit-type="certificate" data-edit-id="${cert.id}" data-edit-field="desc">${cert.desc}</p>
+        </div>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('[data-cert-view]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        const card = e.currentTarget.closest('.cert-card');
+        const certId = card.getAttribute('data-cert-id');
+        openCertificateLightbox(certId);
+        playSynthNote(640, 0.05);
+      });
+    });
+
+    refreshEditModeDOM();
+  }
+
+  renderCertificates('All');
+
+  filterBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      filterBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const filterVal = btn.getAttribute('data-filter');
+      renderCertificates(filterVal);
+      playSynthNote(520, 0.04);
+    });
+  });
+}
+
+function initAddCertForm() {
+  const form = document.getElementById('form-add-cert');
+  const dropzone = document.getElementById('cert-dropzone');
+  const fileInput = document.getElementById('cert-file-input');
+  const previewImg = document.getElementById('cert-preview-img');
+  let selectedDataUrl = null;
+
+  if (!form || !dropzone || !fileInput) return;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      readFileAsDataURL(file, (dataUrl) => {
+        selectedDataUrl = dataUrl;
+        previewImg.src = dataUrl;
+        previewImg.style.display = 'block';
+      });
+    }
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = document.getElementById('cert-title-input').value.trim();
+    const org = document.getElementById('cert-org-input').value.trim();
+    const category = document.getElementById('cert-category-input').value;
+    const year = document.getElementById('cert-year-input').value.trim();
+    const desc = document.getElementById('cert-desc-input').value.trim();
+
+    if (!selectedDataUrl) {
+      showToast('Please select or drag a certificate image.', 'warning');
+      return;
+    }
+
+    const newCert = {
+      id: 'cert-' + Date.now(),
+      title: title,
+      organization: org,
+      year: year,
+      category: category,
+      categoryLabel: `${category} Credential`,
+      badge: 'Verified Credential',
+      image: selectedDataUrl,
+      desc: desc || 'Verified merit award and official participation credential.',
+      verified: true
+    };
+
+    if (!appState.certificates) appState.certificates = [];
+    appState.certificates.unshift(newCert);
+
+    saveState();
+    initCertificates();
+
+    form.reset();
+    previewImg.style.display = 'none';
+    selectedDataUrl = null;
+    document.getElementById('add-cert-modal').classList.remove('active');
+    showToast(`Certificate "${title}" added successfully!`, 'success');
+    playSynthNote(880, 0.1);
+  });
+}
+
+window.deleteCertificate = function(certId) {
+  const c = appState.certificates.find(x => x.id === certId);
+  if (confirm(`Delete certificate "${c ? c.title : certId}"?`)) {
+    appState.certificates = appState.certificates.filter(x => x.id !== certId);
+    saveState();
+    initCertificates();
+    showToast('Certificate removed.', 'info');
+  }
+};
+
+function openCertificateLightbox(certId) {
+  const cert = appState.certificates.find(c => c.id === certId);
+  if (!cert) return;
+
+  const lightbox = document.getElementById('lightbox-modal');
+  const imgEl = document.getElementById('lightbox-img');
+  const titleEl = document.getElementById('lightbox-title');
+  const orgEl = document.getElementById('lightbox-org');
+  const metaEl = document.getElementById('lightbox-meta');
+
+  if (!lightbox || !imgEl) return;
+
+  imgEl.src = cert.image;
+  imgEl.alt = cert.title;
+  if (titleEl) titleEl.textContent = cert.title;
+  if (orgEl) orgEl.textContent = `${cert.organization} • ${cert.year}`;
+  if (metaEl) metaEl.textContent = cert.desc;
+
+  lightbox.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+/* ==========================================================================
+   11. MUN & LEADERSHIP
+   ========================================================================== */
+function initMUNSection() {
+  const pillarsContainer = document.getElementById('mun-pillars-grid');
+  const skillsContainer = document.getElementById('mun-skills-grid');
+  if (!appState.munLeadership) return;
+
+  if (pillarsContainer) {
+    pillarsContainer.innerHTML = (appState.munLeadership.pillars || []).map((pillar, i) => `
+      <div class="mun-pillar-card glass-card">
+        <div class="card-edit-toolbar">
+          <button class="card-action-icon-btn btn-delete" onclick="deleteMUNPillar(${i})">🗑️ Del</button>
+        </div>
+        <div class="pillar-number">0${i + 1}</div>
+        <h4 class="pillar-title" data-edit-type="munPillar" data-edit-id="${i}" data-edit-field="title">${pillar.title}</h4>
+        <p class="pillar-desc" data-edit-type="munPillar" data-edit-id="${i}" data-edit-field="desc">${pillar.desc}</p>
+      </div>
+    `).join('');
+  }
+
+  if (skillsContainer && appState.munLeadership.myVoiceMatters) {
+    skillsContainer.innerHTML = (appState.munLeadership.myVoiceMatters.skillsGained || []).map((skill, i) => `
+      <div class="voice-skill-item glass-panel">
+        <div class="card-edit-toolbar">
+          <button class="card-action-icon-btn btn-delete" onclick="deleteVoiceSkill(${i})">🗑️ Del</button>
+        </div>
+        <div class="voice-skill-icon">✦</div>
+        <div class="voice-skill-info">
+          <h5 class="voice-skill-name" data-edit-type="voiceSkill" data-edit-id="${i}" data-edit-field="name">${skill.name}</h5>
+          <p class="voice-skill-desc" data-edit-type="voiceSkill" data-edit-id="${i}" data-edit-field="desc">${skill.desc}</p>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  refreshEditModeDOM();
+}
+
+window.deleteMUNPillar = function(idx) {
+  if (confirm('Delete this MUN pillar?')) {
+    appState.munLeadership.pillars.splice(idx, 1);
+    saveState();
+    initMUNSection();
+    showToast('Pillar removed.', 'info');
+  }
+};
+
+window.deleteVoiceSkill = function(idx) {
+  if (confirm('Delete this voice skill?')) {
+    appState.munLeadership.myVoiceMatters.skillsGained.splice(idx, 1);
+    saveState();
+    initMUNSection();
+    showToast('Skill removed.', 'info');
+  }
+};
+
+/* ==========================================================================
+   12. PUBLIC SPEAKING
+   ========================================================================== */
+function initSpeakingSection() {
+  const catContainer = document.getElementById('speaking-categories-grid');
+  const photosContainer = document.getElementById('speaking-photos-grid');
+  if (!appState.publicSpeaking) return;
+
+  if (catContainer) {
+    catContainer.innerHTML = (appState.publicSpeaking.categories || []).map((cat, i) => `
+      <div class="speaking-cat-card glass-panel">
+        <div class="card-edit-toolbar">
+          <button class="card-action-icon-btn btn-delete" onclick="deleteSpeakingCategory(${i})">🗑️ Del</button>
+        </div>
+        <div class="speaking-cat-header">
+          <span class="speaking-wave-bar"></span>
+          <h4 class="speaking-cat-title" data-edit-type="speakingCat" data-edit-id="${i}" data-edit-field="title">${cat.title}</h4>
+        </div>
+        <p class="speaking-cat-desc" data-edit-type="speakingCat" data-edit-id="${i}" data-edit-field="desc">${cat.desc}</p>
+      </div>
+    `).join('');
+  }
+
+  if (photosContainer) {
+    photosContainer.innerHTML = (appState.publicSpeaking.photos || []).map(photo => `
+      <div class="speaking-photo-card glass-card" data-photo-id="${photo.id}">
+        <div class="card-edit-toolbar">
+          <button class="card-action-icon-btn btn-delete" onclick="event.stopPropagation(); deleteSpeakingPhoto('${photo.id}')">🗑️ Del</button>
+        </div>
+        <img src="${photo.placeholder}" alt="${photo.caption}" class="speaking-img" loading="lazy">
+        <div class="speaking-photo-caption">
+          <span class="speaking-event-tag" data-edit-type="speakingPhoto" data-edit-id="${photo.id}" data-edit-field="event">${photo.event}</span>
+          <p class="speaking-photo-text" data-edit-type="speakingPhoto" data-edit-id="${photo.id}" data-edit-field="caption">${photo.caption}</p>
+        </div>
+
+        <!-- In-Place Upload Trigger -->
+        <button class="img-upload-trigger" title="Change Speaking Photo" onclick="event.stopPropagation(); openImageReplacer('speakingPhoto', '${photo.id}', '${photo.placeholder}', 'Change Speaking Photo')">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span>📷 Swap Photo</span>
+        </button>
+      </div>
+    `).join('');
+
+    photosContainer.querySelectorAll('.speaking-photo-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.img-upload-trigger') || e.target.closest('.card-edit-toolbar')) return;
+        const img = card.querySelector('.speaking-img').src;
+        const caption = card.querySelector('.speaking-photo-text').textContent;
+        openGenericLightbox(img, caption, "Public Speaking & Keynote Showcase");
+      });
+    });
+  }
+
+  refreshEditModeDOM();
+}
+
+function promptAddSpeakingCategory() {
+  const title = prompt('Enter Presentation/Speaking Category Title:');
+  if (!title) return;
+  const desc = prompt('Enter Category Description:');
+
+  if (!appState.publicSpeaking) appState.publicSpeaking = { categories: [], photos: [] };
+  if (!appState.publicSpeaking.categories) appState.publicSpeaking.categories = [];
+  appState.publicSpeaking.categories.push({ title, desc: desc || '', icon: 'mic' });
+
+  saveState();
+  initSpeakingSection();
+  showToast(`Speaking category "${title}" added!`, 'success');
+}
+
+window.deleteSpeakingCategory = function(idx) {
+  if (confirm('Delete speaking category?')) {
+    appState.publicSpeaking.categories.splice(idx, 1);
+    saveState();
+    initSpeakingSection();
+    showToast('Category removed.', 'info');
+  }
+};
+
+window.deleteSpeakingPhoto = function(photoId) {
+  if (confirm('Delete speaking photo?')) {
+    appState.publicSpeaking.photos = appState.publicSpeaking.photos.filter(x => x.id !== photoId);
+    saveState();
+    initSpeakingSection();
+    showToast('Photo removed.', 'info');
+  }
+};
+
+/* ==========================================================================
+   13. SKILLS MATRIX
+   ========================================================================= */
+function initSkills() {
+  const scienceContainer = document.getElementById('skills-science-grid');
+  const commContainer = document.getElementById('skills-comm-grid');
+  const leadContainer = document.getElementById('skills-lead-grid');
+  if (!appState.skills) return;
+
+  function renderSkillCards(container, list, colKey, colorClass) {
+    if (!container || !list) return;
+    container.innerHTML = list.map((item, idx) => `
+      <div class="skill-item-card glass-panel ${colorClass}">
+        <div class="card-edit-toolbar">
+          <button class="card-action-icon-btn" onclick="openCardEditor('skill', '${idx}', '${colKey}')">✏️ Edit</button>
+          <button class="card-action-icon-btn btn-delete" onclick="deleteSkill('${colKey}', ${idx})">🗑️ Del</button>
+        </div>
+        <div class="skill-top">
+          <h4 class="skill-name" data-edit-type="skill" data-edit-id="${idx}" data-edit-subkey="${colKey}" data-edit-field="name">${item.name}</h4>
+          <span class="skill-level-badge" data-edit-type="skill" data-edit-id="${idx}" data-edit-subkey="${colKey}" data-edit-field="level">${item.level}</span>
+        </div>
+        <p class="skill-desc" data-edit-type="skill" data-edit-id="${idx}" data-edit-subkey="${colKey}" data-edit-field="desc">${item.desc}</p>
+      </div>
+    `).join('');
+  }
+
+  renderSkillCards(scienceContainer, appState.skills.scienceTech, 'scienceTech', 'skill-cyan');
+  renderSkillCards(commContainer, appState.skills.communication, 'communication', 'skill-violet');
+  renderSkillCards(leadContainer, appState.skills.creativeLeadership, 'creativeLeadership', 'skill-magenta');
+
+  refreshEditModeDOM();
+}
+
+window.openAddSkillModal = function(colName) {
+  const modal = document.getElementById('add-skill-modal');
+  const targetColInput = document.getElementById('skill-target-col');
+  if (modal && targetColInput) {
+    targetColInput.value = colName;
+    modal.classList.add('active');
+  }
+};
+
+function initAddSkillForm() {
+  const form = document.getElementById('form-add-skill');
+  if (!form) return;
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const colName = document.getElementById('skill-target-col').value || 'scienceTech';
+    const name = document.getElementById('skill-name-input').value.trim();
+    const level = document.getElementById('skill-level-input').value.trim();
+    const desc = document.getElementById('skill-desc-input').value.trim();
+
+    const newSkill = { name, level, desc, icon: 'star' };
+
+    if (!appState.skills) appState.skills = {};
+    if (!appState.skills[colName]) appState.skills[colName] = [];
+    appState.skills[colName].push(newSkill);
+
+    saveState();
+    initSkills();
+
+    form.reset();
+    document.getElementById('add-skill-modal').classList.remove('active');
+    showToast(`Skill "${name}" added!`, 'success');
+    playSynthNote(880, 0.1);
+  });
+}
+
+window.deleteSkill = function(colKey, idx) {
+  const skill = appState.skills[colKey][idx];
+  if (confirm(`Delete skill "${skill ? skill.name : ''}"?`)) {
+    appState.skills[colKey].splice(idx, 1);
+    saveState();
+    initSkills();
+    showToast('Skill removed from matrix.', 'info');
+  }
+};
+
+/* ==========================================================================
+   14. PHOTO WALL / SCRAPBOOK
+   ========================================================================== */
+function initPhotoWall() {
+  const container = document.getElementById('photo-wall-grid');
+  const filterBtns = document.querySelectorAll('.wall-filter-btn');
+  if (!container || !appState.photoWall) return;
+
+  function renderWall(filter = 'All') {
+    const list = filter === 'All'
+      ? appState.photoWall
+      : appState.photoWall.filter(p => p.tag.toLowerCase() === filter.toLowerCase() || (p.category && p.category.toLowerCase().includes(filter.toLowerCase())));
+
+    container.innerHTML = list.map(item => `
+      <div class="wall-card glass-card aspect-${item.aspect || 'landscape'}" data-wall-id="${item.id}">
+        <div class="card-edit-toolbar">
+          <button class="card-action-icon-btn" onclick="event.stopPropagation(); openCardEditor('photoWall', '${item.id}')">✏️ Edit</button>
+          <button class="card-action-icon-btn btn-delete" onclick="event.stopPropagation(); deletePhotoWallItem('${item.id}')">🗑️ Delete</button>
+        </div>
+
+        <div class="wall-image-wrapper">
+          <img src="${item.image}" alt="${item.title}" class="wall-img" loading="lazy">
+          <div class="wall-overlay">
+            <span class="wall-tag" data-edit-type="photoWall" data-edit-id="${item.id}" data-edit-field="tag">${item.tag}</span>
+            <h4 class="wall-title" data-edit-type="photoWall" data-edit-id="${item.id}" data-edit-field="title">${item.title}</h4>
+            <p class="wall-desc" data-edit-type="photoWall" data-edit-id="${item.id}" data-edit-field="desc">${item.desc}</p>
+          </div>
+
+          <!-- In-Place Upload Trigger -->
+          <button class="img-upload-trigger" title="Change Photo" onclick="event.stopPropagation(); openImageReplacer('photoWall', '${item.id}', '${item.image}', 'Change Scrapbook Photo')">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <span>📷 Swap Photo</span>
+          </button>
+        </div>
+      </div>
+    `).join('');
+
+    container.querySelectorAll('.wall-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.img-upload-trigger') || e.target.closest('.card-edit-toolbar')) return;
+        const id = card.getAttribute('data-wall-id');
+        const item = appState.photoWall.find(p => p.id === id);
+        if (item) {
+          openGenericLightbox(item.image, item.title, `${item.category || ''} • ${item.tag}`);
+          playSynthNote(600, 0.05);
+        }
+      });
+    });
+
+    refreshEditModeDOM();
+  }
+
+  renderWall('All');
+
+  filterBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      filterBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tag = btn.getAttribute('data-filter');
+      renderWall(tag);
+      playSynthNote(500, 0.04);
+    });
+  });
+}
+
+function initAddPhotoForm() {
+  const form = document.getElementById('form-add-photo');
+  const dropzone = document.getElementById('photo-dropzone');
+  const fileInput = document.getElementById('photo-file-input');
+  const previewImg = document.getElementById('photo-preview-img');
+  let selectedDataUrl = null;
+
+  if (!form || !dropzone || !fileInput) return;
+
+  dropzone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      readFileAsDataURL(file, (dataUrl) => {
+        selectedDataUrl = dataUrl;
+        previewImg.src = dataUrl;
+        previewImg.style.display = 'block';
+      });
+    }
+  });
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = document.getElementById('photo-title-input').value.trim();
+    const tag = document.getElementById('photo-tag-input').value;
+    const aspect = document.getElementById('photo-aspect-input').value;
+    const desc = document.getElementById('photo-desc-input').value.trim();
+
+    if (!selectedDataUrl) {
+      showToast('Please upload a photo image.', 'warning');
+      return;
+    }
+
+    const newPhoto = {
+      id: 'photo-' + Date.now(),
+      title: title,
+      tag: tag,
+      category: `${tag} Archive`,
+      desc: desc || 'Event photograph from student scientific and leadership activities.',
+      image: selectedDataUrl,
+      aspect: aspect
+    };
+
+    if (!appState.photoWall) appState.photoWall = [];
+    appState.photoWall.unshift(newPhoto);
+
+    saveState();
+    initPhotoWall();
+
+    form.reset();
+    previewImg.style.display = 'none';
+    selectedDataUrl = null;
+    document.getElementById('add-photo-modal').classList.remove('active');
+    showToast(`Photo "${title}" added to scrapbook!`, 'success');
+    playSynthNote(880, 0.1);
+  });
+}
+
+window.deletePhotoWallItem = function(id) {
+  const p = appState.photoWall.find(x => x.id === id);
+  if (confirm(`Delete photo "${p ? p.title : id}"?`)) {
+    appState.photoWall = appState.photoWall.filter(x => x.id !== id);
+    saveState();
+    initPhotoWall();
+    showToast('Photo removed from scrapbook.', 'info');
+  }
+};
+
+function openGenericLightbox(src, title, subtitle) {
+  const lightbox = document.getElementById('lightbox-modal');
+  const imgEl = document.getElementById('lightbox-img');
+  const titleEl = document.getElementById('lightbox-title');
+  const orgEl = document.getElementById('lightbox-org');
+  const metaEl = document.getElementById('lightbox-meta');
+
+  if (!lightbox || !imgEl) return;
+
+  imgEl.src = src;
+  imgEl.alt = title;
+  if (titleEl) titleEl.textContent = title;
+  if (orgEl) orgEl.textContent = subtitle;
+  if (metaEl) metaEl.textContent = "Digital Archive View";
+
+  lightbox.classList.add('active');
+  document.body.style.overflow = 'hidden';
+}
+
+/* ==========================================================================
+   15. CURRENTLY EXPLORING RADAR
+   ========================================================================== */
+function initExploringRadar() {
+  const container = document.getElementById('exploring-radar-tags');
+  if (!container || !appState.exploringRadar) return;
+
+  container.innerHTML = appState.exploringRadar.map((topic, i) => `
+    <div class="radar-tag glass-card" style="animation-delay: ${i * 0.1}s">
+      <div class="card-edit-toolbar">
+        <button class="card-action-icon-btn btn-delete" onclick="deleteRadarTag(${i})">🗑️</button>
+      </div>
+      <span class="radar-pulse-dot"></span>
+      <div class="radar-content">
+        <span class="radar-name" data-edit-type="radar" data-edit-id="${i}" data-edit-field="name">${topic.name}</span>
+        <span class="radar-desc" data-edit-type="radar" data-edit-id="${i}" data-edit-field="desc">${topic.desc}</span>
+      </div>
+    </div>
+  `).join('');
+
+  refreshEditModeDOM();
+}
+
+function initAddRadarForm() {
+  const form = document.getElementById('form-add-radar');
+  if (!form) return;
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = document.getElementById('radar-name-input').value.trim();
+    const desc = document.getElementById('radar-desc-input').value.trim();
+
+    if (!appState.exploringRadar) appState.exploringRadar = [];
+    appState.exploringRadar.push({ name, desc, active: true });
+
+    saveState();
+    initExploringRadar();
+
+    form.reset();
+    document.getElementById('add-radar-modal').classList.remove('active');
+    showToast(`Radar tag "${name}" added!`, 'success');
+    playSynthNote(880, 0.1);
+  });
+}
+
+window.deleteRadarTag = function(idx) {
+  if (confirm(`Remove radar tag "${appState.exploringRadar[idx].name}"?`)) {
+    appState.exploringRadar.splice(idx, 1);
+    saveState();
+    initExploringRadar();
+    showToast('Radar tag removed.', 'info');
+  }
+};
+
+/* ==========================================================================
+   16. EXPORT CODE ACTIONS
+   ========================================================================== */
+function initExportActions() {
+  const downloadJsBtn = document.getElementById('btn-download-data-js');
+  const downloadJsonBtn = document.getElementById('btn-download-json');
+  const copyJsBtn = document.getElementById('btn-copy-data-js');
+  const downloadHtmlBtn = document.getElementById('btn-download-html');
+
+  if (downloadJsBtn) {
+    downloadJsBtn.addEventListener('click', () => {
+      const dataStr = generateDataJsContent();
+      downloadBlob(dataStr, 'data.js', 'application/javascript');
+      showToast('data.js downloaded! Replace scripts/data.js in your project folder.', 'success');
+      playSynthNote(780, 0.08);
+    });
+  }
+
+  if (downloadJsonBtn) {
+    downloadJsonBtn.addEventListener('click', () => {
+      const jsonStr = JSON.stringify(appState, null, 2);
+      downloadBlob(jsonStr, 'prachi_portfolio_backup.json', 'application/json');
+      showToast('Portfolio JSON backup downloaded!', 'success');
+    });
+  }
+
+  if (copyJsBtn) {
+    copyJsBtn.addEventListener('click', () => {
+      const dataStr = generateDataJsContent();
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(dataStr).then(() => {
+          showToast('Copied data.js contents to clipboard! ✓', 'success');
+          playSynthNote(840, 0.06);
+        });
+      }
+    });
+  }
+
+  if (downloadHtmlBtn) {
+    downloadHtmlBtn.addEventListener('click', () => {
+      const clone = document.documentElement.cloneNode(true);
+      clone.classList.remove('edit-mode-active');
+      const dataScript = clone.querySelector('script[src*="data.js"]');
+      if (dataScript) {
+        const inlineScript = document.createElement('script');
+        inlineScript.textContent = `\nconst PORTFOLIO_DATA = ${JSON.stringify(appState, null, 2)};\n`;
+        dataScript.replaceWith(inlineScript);
+      }
+      const fullHtml = '<!DOCTYPE html>\n' + clone.outerHTML;
+      downloadBlob(fullHtml, 'portfolio.html', 'text/html');
+      showToast('Self-contained portfolio.html downloaded! Open it anywhere.', 'success');
+    });
+  }
+}
+
+function generateDataJsContent() {
+  return `/**
+ * PRACHI GUPTA - PORTFOLIO DATA STORE (EXPORTED)
+ * Generated from Live Studio CMS
+ */
+
+const PORTFOLIO_DATA = ${JSON.stringify(appState, null, 2)};
+
+if (typeof Object.freeze === 'function') {
+  Object.freeze(PORTFOLIO_DATA);
+}
+`;
+}
+
+function downloadBlob(content, filename, contentType) {
+  const blob = new Blob([content], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ==========================================================================
+   17. CUSTOM SCI-FI CURSOR
+   ========================================================================== */
+function initCursor() {
+  const dot = document.querySelector('.cursor-dot');
+  const ring = document.querySelector('.cursor-ring');
+  if (!dot || !ring) return;
+
+  let mouseX = window.innerWidth / 2;
+  let mouseY = window.innerHeight / 2;
+  let ringX = mouseX;
+  let ringY = mouseY;
+
+  window.addEventListener('mousemove', (e) => {
+    mouseX = e.clientX;
+    mouseY = e.clientY;
+    dot.style.transform = `translate3d(${mouseX}px, ${mouseY}px, 0)`;
+  });
+
+  function renderRing() {
+    ringX += (mouseX - ringX) * 0.18;
+    ringY += (mouseY - ringY) * 0.18;
+    ring.style.transform = `translate3d(${ringX}px, ${ringY}px, 0)`;
+    requestAnimationFrame(renderRing);
+  }
+  renderRing();
+
+  document.addEventListener('mouseover', (e) => {
+    if (e.target.closest('a, button, input, textarea, select, .interactive-card, .clickable, .img-upload-trigger, .card-action-icon-btn, [data-editable], [data-edit-field]')) {
+      ring.classList.add('cursor-hover');
+      dot.classList.add('cursor-dot-hover');
+    } else {
+      ring.classList.remove('cursor-hover');
+      dot.classList.remove('cursor-dot-hover');
+    }
+  });
+
+  window.addEventListener('mousedown', () => ring.classList.add('cursor-click'));
+  window.addEventListener('mouseup', () => ring.classList.remove('cursor-click'));
+}
+
+/* ==========================================================================
+   18. WEB AUDIO SYNTHESIZER
+   ========================================================================== */
+let audioCtx = null;
+let soundEnabled = false;
+
+function initAudioSynth() {
+  const soundBtn = document.getElementById('sound-toggle-btn');
+  if (!soundBtn) return;
+
+  soundBtn.addEventListener('click', () => {
+    soundEnabled = !soundEnabled;
+    if (soundEnabled && !audioCtx) {
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (AudioContext) audioCtx = new AudioContext();
+    }
+    soundBtn.classList.toggle('active', soundEnabled);
+    showToast(soundEnabled ? 'Audio feedback enabled' : 'Audio feedback muted', 'info');
+    if (soundEnabled) playSynthNote(640, 0.08, 'sine');
+  });
+}
+
+function playSynthNote(freq = 520, duration = 0.06, type = 'sine') {
+  if (!soundEnabled || !audioCtx) return;
+  try {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + duration);
+  } catch (e) {}
+}
+
+/* ==========================================================================
+   19. NAVBAR & SCROLL SPY
+   ========================================================================== */
+function initNavbar() {
+  const header = document.querySelector('.site-header');
+  const mobileToggle = document.querySelector('.mobile-nav-toggle');
+  const mobileMenu = document.querySelector('.mobile-nav-drawer');
+  const navLinks = document.querySelectorAll('.nav-link');
+
+  window.addEventListener('scroll', () => {
+    if (window.scrollY > 40) {
+      header.classList.add('scrolled');
+    } else {
+      header.classList.remove('scrolled');
+    }
+  });
+
+  if (mobileToggle && mobileMenu) {
+    mobileToggle.addEventListener('click', () => {
+      const isOpen = mobileMenu.classList.toggle('open');
+      mobileToggle.setAttribute('aria-expanded', isOpen);
+      playSynthNote(480, 0.05);
+    });
+
+    mobileMenu.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', () => {
+        mobileMenu.classList.remove('open');
+        mobileToggle.setAttribute('aria-expanded', false);
+      });
+    });
+  }
+
+  const sections = document.querySelectorAll('section[id]');
+  window.addEventListener('scroll', () => {
+    let current = '';
+    const scrollPos = window.scrollY + 200;
+
+    sections.forEach(section => {
+      const top = section.offsetTop;
+      const height = section.offsetHeight;
+      if (scrollPos >= top && scrollPos < top + height) {
+        current = section.getAttribute('id');
+      }
+    });
+
+    navLinks.forEach(link => {
+      link.classList.remove('active');
+      if (link.getAttribute('href') === `#${current}`) {
+        link.classList.add('active');
+      }
+    });
+  });
+}
+
+/* ==========================================================================
+   20. MODALS & LIGHTBOXES
+   ========================================================================== */
+function initModals() {
+  const modals = document.querySelectorAll('.modal-backdrop');
+  const closeBtns = document.querySelectorAll('.modal-close-btn, [data-modal-close]');
+
+  closeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      modals.forEach(m => m.classList.remove('active'));
+      document.body.style.overflow = '';
+      playSynthNote(420, 0.04);
+    });
+  });
+
+  modals.forEach(modal => {
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal.classList.remove('active');
+        document.body.style.overflow = '';
+      }
+    });
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      modals.forEach(m => m.classList.remove('active'));
+      document.body.style.overflow = '';
+    }
+  });
+}
+
+/* ==========================================================================
+   21. COMMAND PALETTE (CTRL+K)
+   ========================================================================== */
+function initCommandPalette() {
+  const palette = document.getElementById('command-palette');
+  const searchInput = document.getElementById('palette-search-input');
+  const resultsContainer = document.getElementById('palette-results');
+  const triggerBtns = document.querySelectorAll('.command-palette-trigger');
+
+  if (!palette || !searchInput || !resultsContainer) return;
+
+  const index = [
+    { type: 'Navigation', title: 'Home & Hero', desc: 'Top introduction & quantum core', link: '#hero' },
+    { type: 'Navigation', title: 'About Me', desc: 'Class 11 PCM, drives & vision', link: '#about' },
+    { type: 'Navigation', title: 'My Journey', desc: 'Milestones, Olympiad & Parliamentary forums', link: '#journey' },
+    { type: 'Navigation', title: 'Featured Projects', desc: 'SWAM, GreenSpark, Quantum Dots', link: '#projects' },
+    { type: 'Navigation', title: 'Certificates & Achievements', desc: 'Verified awards & certificates gallery', link: '#certificates' },
+    { type: 'Navigation', title: 'MUN & Leadership', desc: 'UN committees & youth diplomacy', link: '#mun-leadership' },
+    { type: 'Navigation', title: 'Public Speaking', desc: 'Oratory, stage & science keynotes', link: '#public-speaking' },
+    { type: 'Navigation', title: 'Scientific Skills', desc: 'Physics, Chemistry, Tech & Communication', link: '#skills' },
+    { type: 'Navigation', title: 'Photo Wall Scrapbook', desc: 'Exhibition & competition photographs', link: '#photo-wall' },
+    { type: 'Navigation', title: 'My Vision', desc: 'What I am building towards', link: '#vision' },
+    { type: 'Navigation', title: 'Connect & Contact', desc: 'Direct transmission & mail connector', link: '#contact' },
+    { type: 'Action', title: 'Toggle Edit Mode', desc: 'Enable inline text editing and card toolbars', action: () => document.getElementById('studio-toggle-edit').click() },
+    { type: 'Action', title: 'Edit Bio & Profile', desc: 'Open full profile and contact form editor', action: () => openProfileEditor() },
+    { type: 'Action', title: 'Add New Certificate', desc: 'Upload a new credential to gallery', action: () => document.getElementById('add-cert-modal').classList.add('active') },
+    { type: 'Action', title: 'Add New Project', desc: 'Publish a new project card', action: () => document.getElementById('add-project-modal').classList.add('active') },
+    { type: 'Action', title: 'Add Journey Milestone', desc: 'Add milestone to chronology', action: () => document.getElementById('add-milestone-modal').classList.add('active') },
+    { type: 'Action', title: 'Export Updated Code', desc: 'Download data.js file with all current changes', action: () => document.getElementById('export-data-modal').classList.add('active') }
+  ];
+
+  function openPalette() {
+    palette.classList.add('active');
+    searchInput.value = '';
+    searchInput.focus();
+    renderResults(index);
+    playSynthNote(750, 0.05);
+  }
+
+  function closePalette() {
+    palette.classList.remove('active');
+    searchInput.blur();
+  }
+
+  triggerBtns.forEach(btn => btn.addEventListener('click', openPalette));
+
+  window.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      if (palette.classList.contains('active')) closePalette();
+      else openPalette();
+    }
+  });
+
+  searchInput.addEventListener('input', (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    if (!q) {
+      renderResults(index);
+      return;
+    }
+    const filtered = index.filter(item => 
+      item.title.toLowerCase().includes(q) || 
+      item.desc.toLowerCase().includes(q) ||
+      item.type.toLowerCase().includes(q)
+    );
+    renderResults(filtered);
+  });
+
+  function renderResults(items) {
+    if (items.length === 0) {
+      resultsContainer.innerHTML = `<div class="palette-empty">No matching records found.</div>`;
+      return;
+    }
+    resultsContainer.innerHTML = items.slice(0, 10).map((item, idx) => `
+      <div class="palette-item glass-panel" data-palette-idx="${idx}">
+        <div class="palette-item-left">
+          <span class="palette-type-tag">${item.type}</span>
+          <div>
+            <div class="palette-item-title">${item.title}</div>
+            <div class="palette-item-desc">${item.desc}</div>
+          </div>
+        </div>
+        <span class="palette-item-action">Jump ↵</span>
+      </div>
+    `).join('');
+
+    resultsContainer.querySelectorAll('.palette-item').forEach((el, idx) => {
+      el.addEventListener('click', () => {
+        const target = items[idx];
+        closePalette();
+        if (target.action) {
+          target.action();
+        } else if (target.link) {
+          const section = document.querySelector(target.link);
+          if (section) section.scrollIntoView({ behavior: 'smooth' });
+        }
+      });
+    });
+  }
+}
+
+/* ==========================================================================
+   22. CONTACT MODULE
+   ========================================================================== */
+function initContactModule() {
+  const form = document.getElementById('portfolio-contact-form');
+  const directEmailBtn = document.getElementById('btn-send-email-client');
+  if (!form) return;
+
+  function getFormPayload() {
+    const name = form.querySelector('#contact-name').value.trim();
+    const email = form.querySelector('#contact-email').value.trim();
+    const subject = form.querySelector('#contact-subject').value;
+    const msg = form.querySelector('#contact-message').value.trim();
+    return { name, email, subject, msg };
+  }
+
+  if (directEmailBtn) {
+    directEmailBtn.addEventListener('click', () => {
+      const { name, email, subject, msg } = getFormPayload();
+      if (!name || !email || !msg) {
+        showToast('Please fill out Name, Email, and Message to open your email client.', 'warning');
+        return;
+      }
+
+      const targetEmail = (appState.profile && appState.profile.email) ? appState.profile.email : 'contact.prachigupta@example.com';
+      const emailSubject = `[Portfolio Transmission] ${subject} from ${name}`;
+      const emailBody = `Hi Prachi,\n\nSender Name: ${name}\nSender Email: ${email}\nCategory: ${subject}\n\nMessage:\n${msg}\n\n---\nSent via Prachi Gupta Portfolio Direct Connect`;
+
+      const mailtoUrl = `mailto:${encodeURIComponent(targetEmail)}?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+      
+      playSynthNote(840, 0.1, 'sine');
+      showToast('Opening your default email app...', 'info');
+      window.location.href = mailtoUrl;
+    });
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const { name, email, subject, msg } = getFormPayload();
+
+    if (!name || !email || !msg) {
+      showToast('Please fill out all transmission fields.', 'warning');
+      return;
+    }
+
+    const btn = form.querySelector('.btn-direct-email');
+    if (btn) btn.innerHTML = `<span>Transmitting Message...</span>`;
+
+    playSynthNote(880, 0.12, 'sine');
+
+    setTimeout(() => {
+      showToast(`Transmission received from ${email}! Prachi will reply soon.`, 'success');
+      form.reset();
+      if (btn) {
+        btn.innerHTML = `<span>Transmit Online Packet</span>`;
+      }
+    }, 1100);
+  });
+}
+
+/* ==========================================================================
+   23. COPY ACTIONS & TOAST
+   ========================================================================== */
+function initCopyActions() {
+  document.querySelectorAll('[data-copy-target]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetKey = btn.getAttribute('data-copy-target');
+      let text = '';
+      if (targetKey === 'profile.email') {
+        text = (appState.profile && appState.profile.email) ? appState.profile.email : 'contact.prachigupta@example.com';
+      }
+      if (navigator.clipboard && text) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast(`Copied contact ID to clipboard: ${text}`, 'info');
+          playSynthNote(640, 0.06);
+        });
+      }
+    });
+  });
+}
+
+function showToast(message, type = 'info') {
+  let toastContainer = document.querySelector('.toast-container');
+  if (!toastContainer) {
+    toastContainer = document.createElement('div');
+    toastContainer.className = 'toast-container';
+    document.body.appendChild(toastContainer);
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type} glass-card`;
+  toast.innerHTML = `
+    <span class="toast-dot"></span>
+    <span class="toast-message">${message}</span>
+  `;
+
+  toastContainer.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+/* ==========================================================================
+   24. SCROLL REVEAL ANIMATIONS
+   ========================================================================== */
+function initScrollAnimations() {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('in-view');
+      }
+    });
+  }, { threshold: 0.12 });
+
+  document.querySelectorAll('.reveal-on-scroll').forEach(el => observer.observe(el));
+}
